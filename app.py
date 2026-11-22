@@ -506,9 +506,12 @@ def process_video(req: VideoRequest, user: dict = Depends(get_current_user)):
     prompt = build_prompt(req.language, req.mode, req.include_frames)
 
     try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-flash-latest",
+        client = genai.Client(
+         api_key=api_key,
+         http_options=types.HttpOptions(api_version="v1beta"),
+     )
+     response = client.models.generate_content(
+         model="gemini-3.8-flash",,
             contents=types.Content(
                 parts=[
                     types.Part(file_data=types.FileData(file_uri=clean_url)),
