@@ -45,27 +45,22 @@ def get_secret_key() -> bytes:
 
 
 SECRET_KEY = get_secret_key()
-
 app = FastAPI(title="منصة تفريغ وكتابة محتوى يوتيوب الاحترافية")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# -------------------- قاعدة البيانات --------------------
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
+            """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
-            )
-            """
+            )"""
         )
         conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS history (
+            """CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 youtube_url TEXT NOT NULL,
@@ -77,8 +72,7 @@ def init_db():
                 markdown_content TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-            """
+            )"""
         )
         conn.commit()
 
@@ -86,7 +80,6 @@ def init_db():
 init_db()
 
 
-# -------------------- التشفير والجلسات --------------------
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120_000)
@@ -135,7 +128,6 @@ def get_current_user(request: Request) -> dict:
     return user
 
 
-# -------------------- نماذج البيانات --------------------
 class AuthRequest(BaseModel):
     username: str
     password: str
@@ -148,7 +140,6 @@ class VideoRequest(BaseModel):
     include_frames: bool = True
 
 
-# -------------------- أدوات يوتيوب والصور --------------------
 def extract_youtube_id(url: str) -> str | None:
     pattern = (
         r"(?:https?:\/\/)?(?:www\.|m\.)?"
@@ -176,7 +167,6 @@ def download_cover_image(video_id: str) -> str | None:
     filepath = os.path.join(MEDIA_DIR, filename)
     if os.path.exists(filepath):
         return f"/static/media/{filename}"
-
     candidates = [
         f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
         f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
@@ -204,20 +194,12 @@ def timestamp_to_seconds(ts: str) -> int:
 
 
 def get_stream_url(youtube_url: str) -> str | None:
-    if not shutil.which("yt-dlp") and not shutil.which("ffmpeg"):
+    if not shutil.which("yt-dlp") or not shutil.which("ffmpeg"):
         return None
     try:
         res = subprocess.run(
-            [
-                "yt-dlp",
-                "-f",
-                "best[height<=720][ext=mp4]/best[ext=mp4]/best",
-                "-g",
-                youtube_url,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=20,
+            ["yt-dlp", "-f", "best[height<=720][ext=mp4]/best[ext=mp4]/best", "-g", youtube_url],
+            capture_output=True, text=True, timeout=20,
         )
         if res.returncode == 0 and res.stdout.strip():
             return res.stdout.strip().splitlines()[0]
@@ -232,21 +214,8 @@ def capture_frame(stream_url: str, timestamp: str, out_path: str) -> bool:
     sec = timestamp_to_seconds(timestamp)
     try:
         res = subprocess.run(
-            [
-                "ffmpeg",
-                "-ss",
-                str(sec),
-                "-i",
-                stream_url,
-                "-frames:v",
-                "1",
-                "-q:v",
-                "2",
-                out_path,
-                "-y",
-            ],
-            capture_output=True,
-            timeout=20,
+            ["ffmpeg", "-ss", str(sec), "-i", stream_url, "-frames:v", "1", "-q:v", "2", out_path, "-y"],
+            capture_output=True, timeout=20,
         )
         return res.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 1000
     except Exception:
@@ -256,31 +225,22 @@ def capture_frame(stream_url: str, timestamp: str, out_path: str) -> bool:
 def enrich_markdown_with_frames(markdown_text: str, video_id: str, youtube_url: str, include_frames: bool) -> str:
     frame_pattern = re.compile(r"\[\[FRAME:\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*\|\s*(.*?)\s*\]\]")
     matches = list(frame_pattern.finditer(markdown_text))
-
     if not matches:
         return markdown_text
-
-    stream_url = None
-    if include_frames and shutil.which("ffmpeg"):
-        stream_url = get_stream_url(youtube_url)
-
+    stream_url = get_stream_url(youtube_url) if (include_frames and shutil.which("ffmpeg")) else None
     captured_count = 0
-    max_frames = 6
 
     def replacer(match: re.Match) -> str:
         nonlocal captured_count
         ts = match.group(1).strip()
         desc = match.group(2).strip()
-
-        if stream_url and captured_count < max_frames:
+        if stream_url and captured_count < 6:
             safe_ts = ts.replace(":", "-")
             filename = f"{video_id}_frame_{safe_ts}_{captured_count}.jpg"
             out_path = os.path.join(MEDIA_DIR, filename)
             if capture_frame(stream_url, ts, out_path):
                 captured_count += 1
                 return f"\n\n![{desc} ({ts})](/static/media/{filename})\n*لقطة من الفيديو عند الدقيقة {ts}: {desc}*\n\n"
-
-        # بديل أنيق في حال عدم توفر ffmpeg أو تعذر استخراج الإطار
         return f"\n\n> 🎬 **لقطة مرجعية من الفيديو [{ts}]:** {desc}\n\n"
 
     return frame_pattern.sub(replacer, markdown_text)
@@ -293,7 +253,6 @@ def build_prompt(language: str, mode: str, include_frames: bool) -> str:
             "- التزم باللغة العربية الفصحى السليمة والرصينة، وتجنب الترجمة الحرفية الركيكة.\n"
             "- استخدم علامات الترقيم بدقة وصِغ العبارات بسلاسة واحترافية عالية.\n"
         )
-
     frames_instruction = ""
     if include_frames:
         frames_instruction = (
@@ -302,7 +261,6 @@ def build_prompt(language: str, mode: str, include_frames: bool) -> str:
             "  [[FRAME: MM:SS | وصف موجز ومفيد للقطة الظاهرة]]\n"
             "  (احرص على أن يكون التوقيت MM:SS دقيقاً ومطابقاً للمشهد).\n"
         )
-
     if mode == "transcript":
         task = (
             "قم بتفريغ وكتابة كل ما يُقال ويُعرض في هذا الفيديو بشكل كامل ومفصل ودقيق.\n"
@@ -322,20 +280,16 @@ def build_prompt(language: str, mode: str, include_frames: bool) -> str:
             "- استخرج جميع النقاط الرئيسية والأفكار العملية في شكل نقاط مرتبة مع الطوابع الزمنية [MM:SS].\n"
             "- أضف أبرز الاستنتاجات والتوصيات."
         )
-
     return (
         f"أنت محرر ومترجم محترف متخصص في تحويل محتوى الفيديو إلى مقالات ونصوص مكتوبة عالية الجودة.\n"
         f"اللغة المطلوبة للمخرجات بالكامل: {language}.\n\n"
         f"المطلوب:\n{task}\n\n"
-        f"ضوابط الجودة:\n"
-        f"{arabic_note}"
-        f"{frames_instruction}"
+        f"ضوابط الجودة:\n{arabic_note}{frames_instruction}"
         f"- لا تختلق أي معلومات غير موجودة في الفيديو.\n"
         f"- نسّق المخرجات باستخدام Markdown احترافي (عناوين، نقاط، خط عريض للمصطلحات المهمة)."
     )
 
 
-# -------------------- تصدير Word (.docx) باللغة العربية RTL --------------------
 def set_paragraph_rtl(paragraph):
     pPr = paragraph._p.get_or_add_pPr()
     bidi = OxmlElement("w:bidi")
@@ -359,29 +313,22 @@ def add_formatted_runs(paragraph, text: str):
 
 def markdown_to_docx_bytes(title: str, markdown_text: str) -> io.BytesIO:
     doc = Document()
-
-    # عنوان المستند
     h = doc.add_heading(title, level=0)
     set_paragraph_rtl(h)
-
     img_pattern = re.compile(r"^!\[(.*?)\]\((.*?)\)$")
 
     for raw_line in markdown_text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
-
         img_match = img_pattern.match(line)
         if img_match:
-            alt_text = img_match.group(1)
-            img_url = img_match.group(2)
-            safe_name = os.path.basename(img_url)
-            local_path = os.path.join(MEDIA_DIR, safe_name)
+            alt_text, img_url = img_match.group(1), img_match.group(2)
+            local_path = os.path.join(MEDIA_DIR, os.path.basename(img_url))
             if os.path.exists(local_path):
                 p_img = doc.add_paragraph()
                 p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run_img = p_img.add_run()
-                run_img.add_picture(local_path, width=Inches(5.6))
+                p_img.add_run().add_picture(local_path, width=Inches(5.6))
                 if alt_text:
                     cap = doc.add_paragraph(alt_text)
                     cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -405,16 +352,14 @@ def markdown_to_docx_bytes(title: str, markdown_text: str) -> io.BytesIO:
             add_formatted_runs(p, line[2:])
             set_paragraph_rtl(p)
         elif re.match(r"^\d+\.\s+", line):
-            clean = re.sub(r"^\d+\.\s+", "", line)
             p = doc.add_paragraph(style="List Number")
-            add_formatted_runs(p, clean)
+            add_formatted_runs(p, re.sub(r"^\d+\.\s+", "", line))
             set_paragraph_rtl(p)
         elif line.startswith("> "):
             p = doc.add_paragraph()
             add_formatted_runs(p, line[2:])
             set_paragraph_rtl(p)
         else:
-            # تجاهل أسطر التعليق المائلة أسفل الصور إذا كانت مكررة أو عرضها بنمط مائل
             clean_line = line.strip("*") if (line.startswith("*") and line.endswith("*") and not line.startswith("**")) else line
             p = doc.add_paragraph()
             add_formatted_runs(p, clean_line)
@@ -426,7 +371,6 @@ def markdown_to_docx_bytes(title: str, markdown_text: str) -> io.BytesIO:
     return buf
 
 
-# -------------------- نقاط النهاية (Endpoints) --------------------
 @app.get("/")
 def read_root():
     return FileResponse("static/index.html")
@@ -445,11 +389,9 @@ def register(req: AuthRequest, response: Response):
     allow_reg = os.environ.get("ALLOW_REGISTRATION", "true").lower() == "true"
     if not allow_reg:
         raise HTTPException(status_code=403, detail="التسجيل مغلق حالياً من قِبل مدير الموقع.")
-
     username = req.username.strip()
     if len(username) < 3 or len(req.password) < 6:
         raise HTTPException(status_code=400, detail="اسم المستخدم يجب أن يكون 3 أحرف على الأقل وكلمة المرور 6 أحرف.")
-
     pw_hash = hash_password(req.password)
     now = datetime.utcnow().isoformat()
     try:
@@ -462,7 +404,6 @@ def register(req: AuthRequest, response: Response):
             conn.commit()
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="اسم المستخدم مسجل مسبقاً.")
-
     token = sign_token(user_id, username)
     response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 7)
     return {"user": {"id": user_id, "username": username}}
@@ -475,10 +416,8 @@ def login(req: AuthRequest, response: Response):
             "SELECT id, username, password_hash FROM users WHERE username = ?",
             (req.username.strip(),),
         ).fetchone()
-
     if not row or not verify_password(req.password, row[2]):
         raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غير صحيحة.")
-
     token = sign_token(row[0], row[1])
     response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 7)
     return {"user": {"id": row[0], "username": row[1]}}
@@ -494,8 +433,7 @@ def logout(response: Response):
 def process_video(req: VideoRequest, user: dict = Depends(get_current_user)):
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="مفتاح GEMINI_API_KEY غير مضبوط في ملف .env.")
-
+        raise HTTPException(status_code=500, detail="مفتاح GEMINI_API_KEY غير مضبوط في متغيرات البيئة.")
     video_id = extract_youtube_id(req.url)
     if not video_id:
         raise HTTPException(status_code=400, detail="رابط يوتيوب غير صالح.")
@@ -507,34 +445,43 @@ def process_video(req: VideoRequest, user: dict = Depends(get_current_user)):
 
     try:
         client = genai.Client(
-         api_key=api_key,
-         http_options=types.HttpOptions(api_version="v1beta"),
-     )
-     response = client.models.generate_content(
-         model="gemini-3.8-flash",,
-            contents=types.Content(
-                parts=[
-                    types.Part(file_data=types.FileData(file_uri=clean_url)),
-                    types.Part(text=prompt),
-                ]
-            ),
+            api_key=api_key,
+            http_options=types.HttpOptions(api_version="v1beta"),
         )
-        if not response.text:
-            raise HTTPException(status_code=500, detail="لم يتم إرجاع نص من النموذج.")
+        models_to_try = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+        response = None
+        last_error = None
+        for model_name in models_to_try:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=types.Content(
+                        parts=[
+                            types.Part(file_data=types.FileData(file_uri=clean_url)),
+                            types.Part(text=prompt),
+                        ]
+                    ),
+                )
+                break
+            except Exception as model_err:
+                last_error = model_err
+                err_str = str(model_err)
+                if "404" in err_str or "NOT_FOUND" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    continue
+                raise
+
+        if not response or not response.text:
+            raise HTTPException(status_code=500, detail=f"تعذر الحصول على استجابة من النموذج: {last_error}")
 
         enriched_md = enrich_markdown_with_frames(response.text, video_id, clean_url, req.include_frames)
-
-        # إضافة صورة الغلاف الرئيسية في أعلى المحتوى
         if cover_path:
             enriched_md = f"![صورة غلاف الفيديو: {title}]({cover_path})\n\n" + enriched_md
 
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.execute(
-                """
-                INSERT INTO history (user_id, youtube_url, video_id, title, language, mode, cover_image, markdown_content, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """INSERT INTO history (user_id, youtube_url, video_id, title, language, mode, cover_image, markdown_content, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (user["id"], clean_url, video_id, title, req.language, req.mode, cover_path, enriched_md, now),
             )
             item_id = cur.lastrowid
@@ -562,13 +509,8 @@ def get_history(user: dict = Depends(get_current_user)):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            """
-            SELECT id, youtube_url, video_id, title, language, mode, cover_image, created_at
-            FROM history
-            WHERE user_id = ?
-            ORDER BY id DESC
-            LIMIT 50
-            """,
+            """SELECT id, youtube_url, video_id, title, language, mode, cover_image, created_at
+               FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 50""",
             (user["id"],),
         ).fetchall()
     return {"items": [dict(r) for r in rows]}
